@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Simple AdBlock",
+  "version": "1.1.0",
+  "description": "Blocks ads via domain blocklists with a dashboard to import lists and add custom domains.",
+  "minimum_chrome_version": "121",
+  "permissions": ["declarativeNetRequest", "declarativeNetRequestFeedback", "storage", "webRequest"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["shared.js", "cosmetic-rules.js", "cosmetic.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "Simple AdBlock" },
+  "options_page": "dashboard.html"
+}
