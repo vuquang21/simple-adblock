@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Simple AdBlock — Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header>
+    <h1>Simple AdBlock</h1>
+    <div id="diag" class="muted"></div>
+  </header>
+
+  <section class="card card-row">
+    <label class="switch">
+      <input type="checkbox" id="enabled">
+      <span class="track"></span>
+      Blocking enabled
+    </label>
+    <span id="count" class="muted"></span>
+  </section>
+
+  <section class="card">
+    <h2>Add a custom domain</h2>
+    <div class="row">
+      <input type="text" id="customDomain" placeholder="ads.example.com">
+      <button class="btn" id="addDomain">Add</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Never block (<span id="whitelistTotal"></span>)</h2>
+    <p class="muted">Sites here are left completely alone: no blocking and no auto-detection.</p>
+    <div class="row">
+      <input type="text" id="allowHost" placeholder="example.com">
+      <button class="btn" id="allowSite">Allow</button>
+    </div>
+    <ul class="list" id="whitelistList"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Import blocklist from URL</h2>
+    <div class="row">
+      <input type="url" id="listUrl" placeholder="https://.../easylist.txt">
+      <button class="btn btn-outline" id="importUrl">Import</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Paste a blocklist</h2>
+    <textarea id="pasteList" placeholder="Paste hosts-file lines, plain domains, or EasyList rules (##element rules are imported too), one per line"></textarea>
+    <div class="actions">
+      <button class="btn btn-outline" id="importPaste">Import pasted</button>
+      <span id="status" class="muted"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Blocked domains (<span id="total">0</span>)</h2>
+    <div class="actions">
+      <button class="btn btn-danger" id="clearAll">Clear all</button>
+    </div>
+    <ul class="list" id="list"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Element-hiding rules (<span id="cosmeticTotal">0</span>)</h2>
+    <p class="muted">The <code>##selector</code> rules from imported lists, applied on every site. These hide ad boxes that no network block can remove.</p>
+    <div class="actions">
+      <button class="btn btn-outline" id="clearCosmetic">Clear all</button>
+    </div>
+    <ul class="list" id="cosmeticList"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Auto-blocked ad/tracker requests (<span id="detectedTotal">0</span>)</h2>
+    <p class="muted">Third-party requests that looked like ads and were added to the blocklist automatically. Most-seen first.</p>
+    <div class="actions">
+      <button class="btn btn-outline" id="clearDetected">Clear log</button>
+    </div>
+    <ul class="list" id="detectedList"></ul>
+  </section>
+
+  <script src="shared.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
