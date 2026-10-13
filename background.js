@@ -23,9 +23,20 @@ chrome.storage.local.get(["domains", "enabled", "whitelist"]).then(({ domains = 
 
 chrome.action.setBadgeBackgroundColor({ color: "#2f6fed" });
 
+// Rule syncs must never overlap. On install/startup the seed's storage write fires
+// storage.onChanged while onInstalled/onStartup also call syncRules, and two runs that
+// both read "no existing rules" try to add the same id and Chrome rejects the second with
+// "Rule with id 1 does not have a unique ID." Chain them so each run sees the previous
+// run's rules and diffing stays correct.
+let syncQueue = Promise.resolve();
+function syncRules() {
+  syncQueue = syncQueue.then(syncRulesNow, syncRulesNow);
+  return syncQueue;
+}
+
 // Each domain gets a stable rule id for the install, so adding one domain is a small
 // diff instead of a remove-all + add-all rebuild of every rule.
-async function syncRules() {
+async function syncRulesNow() {
   try {
     const { enabled = true, domains = [], whitelist: wl = [], ruleIds: saved = {} } =
       await chrome.storage.local.get(["enabled", "domains", "whitelist", "ruleIds"]);
