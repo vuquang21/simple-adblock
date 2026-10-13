@@ -34,12 +34,37 @@ const YOUTUBE_SELECTORS = [
 const YOUTUBE_AD_PLAYING = "#movie_player.ad-showing, #movie_player.ad-interrupting";
 const YOUTUBE_SKIP = ".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-container button";
 
+// The <video> is shared between the ad and the real video, so any speed change must be
+// undone the moment the ad ends or the real video would keep playing at 16x. Remember the
+// element we sped up and watch the player's class so the reset is instant, not up to a
+// full 300ms tick late (at 16x that would skip several seconds of the actual video).
+let youtubeAdVideo = null;
+let youtubeObserver = null;
+
 function youtubeAdTick() {
   const player = document.querySelector(YOUTUBE_AD_PLAYING);
-  if (!player) return;
+  if (!player) {
+    if (youtubeAdVideo && youtubeAdVideo.playbackRate !== 1) youtubeAdVideo.playbackRate = 1;
+    youtubeAdVideo = null;
+    // Attach once the player exists. It appears after document_start, so this is lazy.
+    const root = document.querySelector("#movie_player");
+    if (root && !youtubeObserver && typeof MutationObserver === "function") {
+      youtubeObserver = new MutationObserver(youtubeAdTick);
+      youtubeObserver.observe(root, { attributes: true, attributeFilter: ["class"] });
+    }
+    return;
+  }
   const video = player.querySelector("video");
-  // Live streams report Infinity; seeking there would break playback.
-  if (video && isFinite(video.duration) && video.duration > 0) video.currentTime = video.duration;
+  if (video) {
+    youtubeAdVideo = video;
+    try {
+      // Seeking to the end skips a normal ad outright. Some ad formats report no finite
+      // duration, so also play it at 16x — a fast-forward YouTube does not reject the way
+      // it sometimes does a seek mid-ad.
+      if (isFinite(video.duration) && video.duration > 0) video.currentTime = video.duration;
+      if (video.playbackRate !== 16) video.playbackRate = 16;
+    } catch {} // the player can reject a seek while the ad is still loading
+  }
   const skip = player.querySelector(YOUTUBE_SKIP);
   if (skip) skip.click();
 }

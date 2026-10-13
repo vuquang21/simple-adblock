@@ -9,7 +9,8 @@ const assert = require("assert");
 function makeDom(hostname, { adPlayer = true } = {}) {
   const injected = [];
   const counts = { skip: 0 };
-  const video = { duration: 30, currentTime: 0 };
+  const state = { adPlayer };
+  const video = { duration: 30, currentTime: 0, playbackRate: 1 };
   const skip = { click: () => counts.skip++ };
   const player = {
     querySelector(sel) {
@@ -22,9 +23,9 @@ function makeDom(hostname, { adPlayer = true } = {}) {
     createElement: tag => ({ tag, textContent: "" }),
     head: { append: el => injected.push(el) },
     documentElement: { append: el => injected.push(el) },
-    querySelector: sel => (adPlayer && sel.includes("#movie_player.ad-showing") ? player : null)
+    querySelector: sel => (state.adPlayer && sel.includes("#movie_player.ad-showing") ? player : null)
   };
-  return { document, location: { hostname }, injected, counts, video };
+  return { document, location: { hostname }, injected, counts, video, state };
 }
 
 function load(dom, state) {
@@ -55,7 +56,13 @@ const flush = () => new Promise(r => setTimeout(r, 0));
   dom.counts.skip = 0; // the init tick already ran; count only the tick under test
   sandbox.youtubeAdTick();
   assert.strictEqual(dom.video.currentTime, 30, "the tick should seek past the ad");
+  assert.strictEqual(dom.video.playbackRate, 16, "the tick should fast-forward an ad that ignores seeks");
   assert.strictEqual(dom.counts.skip, 1, "the tick should press Skip");
+
+  // When the ad ends, the shared <video> must be put back to normal speed.
+  dom.state.adPlayer = false;
+  sandbox.youtubeAdTick();
+  assert.strictEqual(dom.video.playbackRate, 1, "the real video must not stay at 16x after the ad");
 
   // Off YouTube: no scoped selectors, and no player so the tick is a no-op.
   const off = makeDom("news.example", { adPlayer: false });
