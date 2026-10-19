@@ -13,7 +13,8 @@ Network blocking and element hiding are both per-site overridable via a whitelis
 - **`manifest.json`** — MV3 config. Uses `declarativeNetRequest` (blocking + whitelist allow
   rules + the matched-rule count), `declarativeNetRequestFeedback` (needed by
   `getMatchedRules`, unpacked only), `webRequest` (observing requests for auto-detection),
-  and `storage`. Pins `minimum_chrome_version` 121 for the 30k safe-dynamic-rule limit.
+  and `storage`. Pins `minimum_chrome_version` 121 for the 30k safe-dynamic-rule limit. Loads
+  `youtube-main.js` as a static `world: "MAIN"` content script for `*://*.youtube.com/*`.
 - **`background.js`** — service worker. Rebuilds dynamic DNR rules from the blocklist and the
   whitelist, auto-blocks ad-like third-party requests it observes, and keeps the per-tab block
   count in the action badge. Request writes are batched (2s flush).
@@ -30,9 +31,19 @@ Network blocking and element hiding are both per-site overridable via a whitelis
   selectors that are plain CSS. Do not edit by hand.
 - **`cosmetic.js`** — content script, top frame, `document_start`. Injects the shipped generic
   selectors plus the user's imported ones as one hiding stylesheet, unless the site is
-  whitelisted. On `youtube.com` it also injects scoped ad selectors and runs a 300ms tick that
-  seeks the player past a video ad and presses Skip, because YouTube serves ads inside the
-  same stream where no network rule can reach them.
+  whitelisted. On `youtube.com` it also injects scoped ad selectors as one rule per selector
+  (a single invalid selector must not drop the whole stylesheet), removes feed/watch/sidebar ad
+  nodes (including their grid cell), dismisses the anti-adblock enforcement popup, seeks the ad
+  `<video>` once to just before its end at 16x + mute and presses Skip, and mirrors the
+  enabled/whitelist state into the `sab-ads-off` `localStorage` key that `youtube-main.js` reads
+  on the next load.
+- **`youtube-main.js`** — static MAIN-world content script for `*://*.youtube.com/*`.
+  Deletes `adPlacements`/`playerAds`/`adSlots`/`adSlotLoggingData` from
+  `window.ytInitialPlayerResponse` and from `/youtubei/v1/player` fetch/XHR responses, so no
+  video ad is ever scheduled. A MAIN-world script cannot read `chrome.storage`, so its
+  enabled/whitelist gate is a `localStorage` flag that `cosmetic.js` keeps in sync.
+  shortcut: server-stitched (SSAI) and live-stream ads have no separate ad video to seek, so
+  they are not removable client-side.
 - **`dashboard.{html,js,css}`** — options page: import lists, view/remove domains and whitelisted
   sites, see diagnostics, the auto-detected log and the element-hiding rules.
 - **`popup.{html,js}`** — toolbar popup: on/off toggle, domain count, per-site allow toggle and
@@ -66,9 +77,11 @@ Plain Node + `assert`, no framework or `package.json`. Run each directly:
 node test/parse.test.js
 node test/background.test.js
 node test/cosmetic.test.js
+node test/youtube-main.test.js
 ```
 `background.test.js` runs `background.js` in a `vm` against a fake `chrome` API;
-`cosmetic.test.js` does the same for `cosmetic.js` against a fake DOM.
+`cosmetic.test.js` does the same for `cosmetic.js` against a fake DOM;
+`youtube-main.test.js` does the same for `youtube-main.js` against a fake `window` and `fetch`.
 
 ## Conventions
 

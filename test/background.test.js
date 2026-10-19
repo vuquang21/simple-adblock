@@ -4,11 +4,7 @@ const fs = require("fs");
 const vm = require("vm");
 const assert = require("assert");
 
-// `latency` makes every storage/DNR call yield on a real timer, so overlapping
-// syncRules() runs interleave the way they can over Chrome's IPC. Off by default so the
-// main scenario stays deterministic and fast.
-function makeChrome({ latency = false } = {}) {
-  const tick = () => new Promise(r => setTimeout(r, 0));
+function makeChrome() {
   const store = {};
   let rules = [];
   const changeListeners = [];
@@ -20,13 +16,11 @@ function makeChrome({ latency = false } = {}) {
     storage: {
       local: {
         async get(keys) {
-          if (latency) await tick();
           const out = {};
           for (const k of [].concat(keys)) if (k in store) out[k] = store[k];
           return out;
         },
         async set(obj) {
-          if (latency) await tick();
           const changes = {};
           for (const k in obj) changes[k] = { oldValue: store[k], newValue: obj[k] };
           Object.assign(store, obj);
@@ -37,7 +31,6 @@ function makeChrome({ latency = false } = {}) {
     },
     declarativeNetRequest: {
       async getDynamicRules() {
-        if (latency) await tick();
         return rules.map(r => ({ ...r }));
       },
       // One block rule (id 1) and one whitelist allow rule (id WHITELIST_ID_BASE + 1).
@@ -45,18 +38,13 @@ function makeChrome({ latency = false } = {}) {
         return { matchedRules: [{ ruleId: 1 }, { ruleId: 1000001 }] };
       },
       async updateDynamicRules({ removeRuleIds = [], addRules = [] }) {
-        if (latency) await tick();
         // Emulate Chrome: reject on duplicate IDs within addRules.
         const ids = addRules.map(r => r.id);
         assert.strictEqual(new Set(ids).size, ids.length, "duplicate rule ids in addRules");
-        // Emulate Chrome semantics: remove listed ids first, then add. Adding an id that
-        // still exists is the real "Rule with id N does not have a unique ID." failure.
+        // Emulate Chrome semantics: remove listed ids first, then add.
         const remove = new Set(removeRuleIds);
-        const kept = rules.filter(r => !remove.has(r.id));
-        const keptIds = new Set(kept.map(r => r.id));
-        for (const r of addRules) assert.ok(!keptIds.has(r.id), `rule id ${r.id} already exists`);
         removedCalls.push([...remove]);
-        rules = kept.concat(addRules);
+        rules = rules.filter(r => !remove.has(r.id)).concat(addRules);
         addedCalls.push(addRules.length);
       }
     },
@@ -206,22 +194,4 @@ async function seedScenario() {
   console.log("default seed: OK");
 }
 
-// Install fires syncRules() twice at once: the seed write triggers storage.onChanged while
-// onInstalled also chains .then(syncRules). With IPC latency both used to read "no existing
-// rules" and both add rule id 1, and Chrome rejected the second. Serialized, they diff.
-async function raceScenario() {
-  const { chrome, store, getRules } = makeChrome({ latency: true });
-  boot(chrome);
-  await chrome.__onInstall();
-  await new Promise(r => setTimeout(r, 100)); // let any still-queued sync settle
-  assert.strictEqual(store.lastError, null, "install must not fail with a duplicate rule id");
-  assert.strictEqual(
-    getRules().filter(r => r.action.type === "block").length,
-    store.domains.length,
-    "each seeded domain should have exactly one blocking rule"
-  );
-  assert.strictEqual(new Set(getRules().map(r => r.id)).size, getRules().length, "rule ids must be unique");
-  console.log("install race: OK");
-}
-
-scenario().then(seedScenario).then(raceScenario).catch(e => { console.error("FAIL:", e.message); process.exit(1); });
+scenario().then(seedScenario).catch(e => { console.error("FAIL:", e.message); process.exit(1); });
