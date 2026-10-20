@@ -155,7 +155,7 @@ function scheduleFlush() {
 
 // The starter list is versioned so a new batch of defaults also reaches installs that already
 // have a list, instead of only ever helping a fresh profile.
-const SEED_VERSION = 2;
+const SEED_VERSION = 3;
 
 // A new install starts with the common ad/tracker networks already blocked, so ads are gone
 // before auto-detection has watched anything. An existing list is merged, never replaced, and a

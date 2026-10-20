@@ -23,10 +23,14 @@ function makeDom(hostname, { adPlayer = true } = {}) {
   const adNode = { closest: sel => (sel.includes("rich-item") ? cell : null) };
   const popup = { remove: () => counts.removed++ };
   const dismiss = { click: () => counts.dismiss++ };
+  // parentElement is set like a real append: cosmetic.js checks it to know the sheet is still
+  // in the page, which is how a pick after the page replaced <head> re-creates it.
+  const head = { append: el => { el.parentElement = head; injected.push(el); } };
+  const documentElement = { append: el => { el.parentElement = documentElement; injected.push(el); } };
   const document = {
     createElement: tag => ({ tag, textContent: "" }),
-    head: { append: el => injected.push(el) },
-    documentElement: { append: el => injected.push(el) },
+    head,
+    documentElement,
     querySelector: sel => {
       if (adPlayer && sel.includes("#movie_player.ad-showing")) return player;
       if (sel.includes("enforcement")) return popup;
@@ -93,6 +97,33 @@ const flush = () => new Promise(r => setTimeout(r, 0));
   assert.ok(!off.injected[0].textContent.includes(".ytp-ad-module"), "no YouTube selectors off YouTube");
   offSandbox.youtubeAdTick();
   assert.strictEqual(off.video.currentTime, 0, "no player means no seek");
+
+  // A rule stored for one site applies there (and on its subdomains), nowhere else.
+  const scoped = makeDom("www.phim.example", { adPlayer: false });
+  const scopedSandbox = load(scoped, {
+    enabled: true, whitelist: [], cosmetic: [], siteRules: { "phim.example": [".banner-quang-cao"] }
+  });
+  await flush();
+  assert.ok(scoped.injected[0].textContent.includes(".banner-quang-cao"),
+    "a rule set on the apex must cover the subdomain");
+  // A picked rule has to hide right away, not on the next load.
+  scopedSandbox.addHiddenRule("#ads-top");
+  assert.ok(scoped.injected[0].textContent.includes("#ads-top{display:none!important}"),
+    "a picked rule joins the live stylesheet");
+  assert.strictEqual(scoped.injected.length, 1, "a picked rule must not add a second stylesheet");
+  // A page that replaces <head> detaches the sheet; a pick has to bring it back, otherwise the
+  // rule is saved and the toast says "hidden" while the banner stays on screen.
+  scoped.injected[0].parentElement = null;
+  scopedSandbox.addHiddenRule("#late-banner");
+  assert.strictEqual(scoped.injected.length, 2, "a pick after <head> was replaced re-injects the sheet");
+  assert.ok(scoped.injected[1].textContent.includes("#late-banner{display:none!important}"),
+    "the re-created sheet still carries the picked rule");
+
+  const other = makeDom("other.example", { adPlayer: false });
+  load(other, { enabled: true, whitelist: [], cosmetic: [], siteRules: { "phim.example": [".banner-quang-cao"] } });
+  await flush();
+  assert.ok(!other.injected[0].textContent.includes(".banner-quang-cao"),
+    "a site rule must never leak to another site");
 
   // Whitelisted YouTube: nothing is injected at all.
   const wl = makeDom("www.youtube.com");

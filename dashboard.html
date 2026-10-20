@@ -48,7 +48,7 @@
 
   <section class="card">
     <h2>Paste a blocklist</h2>
-    <textarea id="pasteList" placeholder="Paste hosts-file lines, plain domains, or EasyList rules (##element rules are imported too), one per line"></textarea>
+    <textarea id="pasteList" placeholder="Paste hosts-file lines, plain domains, or EasyList rules (##element rules are imported too, per-site ones included), one per line"></textarea>
     <div class="actions">
       <button class="btn btn-outline" id="importPaste">Import pasted</button>
       <span id="status" class="muted"></span>
@@ -64,8 +64,17 @@
   </section>
 
   <section class="card">
+    <h2>Per-site element rules (<span id="siteTotal">0</span>)</h2>
+    <p class="muted">Rules tied to one host: the banners picked with “Block an element on this page”, plus the site-scoped <code>site.com##selector</code> rules an imported list brings. They never apply to another site.</p>
+    <div class="actions">
+      <button class="btn btn-outline" id="clearSiteRules">Clear all</button>
+    </div>
+    <ul class="list" id="siteList"></ul>
+  </section>
+
+  <section class="card">
     <h2>Element-hiding rules (<span id="cosmeticTotal">0</span>)</h2>
-    <p class="muted">The <code>##selector</code> rules from imported lists, applied on every site. These hide ad boxes that no network block can remove.</p>
+    <p class="muted">The generic <code>##selector</code> rules from imported lists, applied on every site. These hide ad boxes that no network block can remove.</p>
     <div class="actions">
       <button class="btn btn-outline" id="clearCosmetic">Clear all</button>
     </div>

@@ -78,6 +78,23 @@ const YOUTUBE_ENFORCEMENT = "ytd-enforcement-message-view-model";
 
 let adVideo = null; // the <video> sped up for the current ad, so it can be restored afterwards
 let adVideoMuted = false;
+let hiddenSheet = null; // the one hiding stylesheet, so a picked rule lands without a reload
+
+function injectHiding(selectors) {
+  hiddenSheet = document.createElement("style");
+  // One rule per selector: a single invalid selector in a comma-joined list would make the
+  // browser drop the whole rule, taking every other ad selector with it.
+  hiddenSheet.textContent = selectors.map(s => s + "{display:none!important}").join("\n");
+  (document.head || document.documentElement).append(hiddenSheet);
+}
+
+// Called by picker.js once it has saved a rule, so the picked banner disappears immediately
+// instead of only on the next load. The sheet can be missing (blocking was off when the page
+// loaded, or the page replaced <head>), so a pick re-creates it rather than hiding nothing.
+function addHiddenRule(selector) {
+  if (!hiddenSheet || !hiddenSheet.parentElement) injectHiding([]);
+  hiddenSheet.textContent += "\n" + selector + "{display:none!important}";
+}
 
 function stopAdFastForward() {
   if (adVideo) {
@@ -126,19 +143,19 @@ function youtubeAdTick() {
   }
 }
 
-chrome.storage.local.get(["enabled", "whitelist", "cosmetic"]).then(({ enabled = true, whitelist = [], cosmetic = [] }) => {
+chrome.storage.local.get(["enabled", "whitelist", "cosmetic", "siteRules"]).then(({ enabled = true, whitelist = [], cosmetic = [], siteRules = {} }) => {
   const off = !enabled || isWhitelisted(location.hostname, whitelist);
   // youtube-main.js runs in the page world on the next load and reads this to know blocking
   // is off here; it cannot read chrome.storage itself.
   try { localStorage.setItem("sab-ads-off", off ? "1" : "0"); } catch {}
   if (off) return;
   const youtube = /(^|\.)youtube\.com$/.test(location.hostname);
-  const selectors = youtube ? GENERIC_COSMETIC.concat(cosmetic, YOUTUBE_SELECTORS) : GENERIC_COSMETIC.concat(cosmetic);
-  const style = document.createElement("style");
-  // One rule per selector: a single invalid selector in a comma-joined list would make the
-  // browser drop the whole rule, taking every other ad selector with it.
-  style.textContent = selectors.map(s => s + "{display:none!important}").join("\n");
-  (document.head || document.documentElement).append(style);
+  // Rules picked by hand on this site come first in the list because they are the ones that
+  // actually match its random container names.
+  const selectors = siteRulesFor(location.hostname, siteRules)
+    .concat(GENERIC_COSMETIC, cosmetic)
+    .concat(youtube ? YOUTUBE_SELECTORS : []);
+  injectHiding(selectors);
   if (youtube) {
     youtubeAdTick();
     setInterval(youtubeAdTick, 300);// the player is rebuilt on every SPA navigation

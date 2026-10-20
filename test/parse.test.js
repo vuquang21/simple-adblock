@@ -4,8 +4,9 @@ const assert = require("assert");
 
 // Load shared.js and expose its helpers.
 const src = fs.readFileSync(__dirname + "/../shared.js", "utf8");
-const { parseDomains, parseCosmetic, isWhitelisted, AD_HINT, baseDomain } =
-  new Function(src + "; return { parseDomains, parseCosmetic, isWhitelisted, AD_HINT, baseDomain };")();
+const { parseDomains, parseCosmetic, parseScopedCosmetic, siteRulesFor, mergeSiteRules,
+        isWhitelisted, AD_HINT, baseDomain } =
+  new Function(src + "; return { parseDomains, parseCosmetic, parseScopedCosmetic, siteRulesFor,\n     mergeSiteRules, isWhitelisted, AD_HINT, baseDomain };")();
 
 const input = `
 # comment line
@@ -62,6 +63,59 @@ assert.deepStrictEqual(
   [".ad-banner", ".sponsor, .promo-box"]
 );
 console.log("parseCosmetic: OK");
+
+// Site-scoped element-hiding rules: the ones that actually catch random container classes.
+const scoped = parseScopedCosmetic(
+  [
+    "! a comment",
+    "##.generic-ad", // generic: parseCosmetic's job
+    "example.com##.banner-quang-cao",
+    "WWW.Example.com##.ads-top", // normalized to the apex
+    "~foo.com,bar.example.net##.promo", // the ~ domain is an exception, not a target
+    "example.com,other.com##.shared-ad",
+    "example.com#@#.keep-me", // exception rule
+    "example.com##.ad:has-text(Sponsored)", // procedural
+    "example.com##^script:has-text(ads)", // HTML filtering
+    "example.*##.entity-ad", // entity rule, needs ABP's matcher
+    "~example.com##.only-not", // exception-only line hides nothing
+    "*##.wild"
+  ].join("\n")
+);
+assert.deepStrictEqual(scoped["example.com"].sort(), [".ads-top", ".banner-quang-cao", ".shared-ad"]);
+assert.deepStrictEqual(scoped["other.com"], [".shared-ad"]);
+assert.deepStrictEqual(scoped["bar.example.net"], [".promo"]);
+assert.ok(!("foo.com" in scoped), "an exception domain must never get the rule");
+assert.deepStrictEqual(parseScopedCosmetic(""), {});
+console.log("parseScopedCosmetic: OK");
+
+// A stored rule covers the host it was set on and its subdomains, never a parent or a lookalike.
+const stored = { "example.com": [".top-banner"], "www.site.com": [".side-ad"] };
+assert.deepStrictEqual(siteRulesFor("example.com", stored), [".top-banner"]);
+assert.deepStrictEqual(siteRulesFor("www.example.com", stored), [".top-banner"]);
+assert.deepStrictEqual(siteRulesFor("www.site.com", stored), [".side-ad"]);
+assert.deepStrictEqual(siteRulesFor("site.com", stored), [], "a www rule must not cover the apex");
+assert.deepStrictEqual(siteRulesFor("notexample.com", stored), []);
+assert.deepStrictEqual(siteRulesFor("example.com", undefined), []);
+console.log("siteRulesFor: OK");
+
+// Merging an import: no duplicate selectors, and the cap holds so storage cannot blow up.
+const merged = mergeSiteRules({ "a.com": [".x"] }, { "a.com": [".x", ".y"], "b.com": [".z"] });
+assert.deepStrictEqual(merged.siteRules, { "a.com": [".x", ".y"], "b.com": [".z"] });
+assert.strictEqual(merged.added, 2, "only the new selectors count as added");
+const capped = mergeSiteRules({}, { "a.com": [".1", ".2", ".3"], "b.com": [".4"] }, 2);
+assert.deepStrictEqual(capped.siteRules, { "a.com": [".1", ".2"] });
+assert.strictEqual(capped.added, 2);
+console.log("mergeSiteRules: OK");
+
+// A selector that would swallow the rest of the generated stylesheet is never stored: an
+// unterminated comment or quote takes every following rule with it.
+assert.deepStrictEqual(parseCosmetic("##.ad\n##.leak /* note\n##div:not(.ad\n##oops\""), [".ad"]);
+assert.deepStrictEqual(parseCosmetic('##div:not(.ad)\n##a[href="/promo"]'), ["div:not(.ad)", 'a[href="/promo"]'],
+  "balanced brackets and quotes are still valid selectors");
+assert.deepStrictEqual(parseScopedCosmetic("example.com##.ad /* note"), {});
+// The byte budget also guards storage, since selectors from real lists vary widely in length.
+assert.strictEqual(mergeSiteRules({}, { "a.com": ["x".repeat(2000001)] }).added, 0, "a huge selector is refused");
+console.log("safeSelector: OK");
 
 // A whitelisted site covers its subdomains, never a lookalike suffix.
 assert.ok(isWhitelisted("example.com", ["example.com"]));
