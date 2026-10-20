@@ -44,6 +44,11 @@ node test/picker.test.js && node test/auto-hide.test.js && node test/youtube-mai
   case where it must *not* fire, plus the `AUTO_MAX_HIDES` style cap if the signal can mass-match.
 - UI code only writes `chrome.storage.local`; `background.js` owns DNR rules and reacts to
   `storage.onChanged`. Storage keys are documented in `.claude/CLAUDE.md`.
+- `icons/icon-*.png` and `cosmetic-rules.js` are GENERATED — never edit by hand; regenerate with
+  `node tools/build-icons.js` / `node tools/build-cosmetic.js easylist.txt`.
+- `tools/package.js` derives the packaged file list from `manifest.json` plus the `importScripts`
+  and `<script src>` references it reaches. A file loaded only by a path written somewhere else
+  (a string in JS) ships missing from the zip, so prefer adding it to the manifest.
 - Comments explain *why*. A known limit gets a `shortcut:` comment saying when to upgrade it.
 
 ## Reporting
