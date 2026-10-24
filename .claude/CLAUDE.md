@@ -53,7 +53,12 @@ Network blocking and element hiding are both per-site overridable via a whitelis
   whole stylesheet), removes feed/watch/sidebar ad nodes (including their grid cell), dismisses
   the anti-adblock enforcement popup, seeks the ad `<video>` once to just before its end at 16x
   + mute, presses Skip, and mirrors the enabled/whitelist state into the `sab-ads-off`
-  `localStorage` key that `youtube-main.js` reads on the next load.
+  `localStorage` key that `youtube-main.js` reads on the next load. The YouTube work runs on two
+  cadences: `youtubeAdTick` (300ms) stays inside `#movie_player` — a `getElementById` plus a
+  `classList` read, never a document query — and only `youtubeAdSweep` (1500ms) traverses the
+  document for `YOUTUBE_REMOVE` and the enforcement popup. Putting the 14 sweeps back on the
+  fast tick is what made YouTube stutter, so `test/cosmetic.test.js` counts document lookups per
+  tick and fails if one shows up.
 - **`picker.js`** — content script, top frame, after `cosmetic.js` in the same isolated world.
   Armed from the popup (`sab-pick` message): a full-viewport overlay takes the clicks (an ad's
   own capture handler must not navigate away mid-pick), a highlight box follows the hovered

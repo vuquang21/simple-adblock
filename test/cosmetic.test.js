@@ -7,15 +7,25 @@ const assert = require("assert");
 // Minimal DOM: records the injected stylesheet, gives youtubeAdTick a playing ad, a feed
 // ad node to remove and the enforcement popup to dismiss. Selectors are matched by
 // substring so the fake never has to know cosmetic.js's constants.
+// `docQueries` / `docScans` count document-level lookups: the point of the two cadences is that
+// the 300ms tick must not touch the document at all, and counting is how a test can prove it.
 function makeDom(hostname, { adPlayer = true } = {}) {
   const injected = [];
-  const counts = { skip: 0, dismiss: 0, removed: 0 };
+  const counts = { skip: 0, dismiss: 0, removed: 0, docQueries: 0, docScans: 0 };
+  const timers = [];
+  // Flipping this models YouTube adding or dropping the ad class on the player mid-session.
+  const flags = { adPlaying: adPlayer };
   const video = { duration: 30, currentTime: 0, muted: false, playbackRate: 1, ended: false };
   const skip = { click: () => counts.skip++ };
   const player = {
+    classList: {
+      contains: c => flags.adPlaying && (c === "ad-showing" || c === "ad-interrupting")
+    },
     querySelector(sel) {
       if (sel === "video") return video;
-      if (sel.includes("ytp-ad-skip-button") || sel.includes("ytp-skip-ad-button")) return skip;
+      // A Skip button only exists while an ad is on screen, so the fake must not offer one after.
+      if (sel.includes("ytp-ad-skip-button") || sel.includes("ytp-skip-ad-button"))
+        return flags.adPlaying ? skip : null;
       return null;
     }
   };
@@ -32,14 +42,20 @@ function makeDom(hostname, { adPlayer = true } = {}) {
     head,
     documentElement,
     querySelector: sel => {
-      if (adPlayer && sel.includes("#movie_player.ad-showing")) return player;
-      if (sel.includes("enforcement")) return popup;
-      return null;
+      counts.docQueries++;
+      return sel.includes("enforcement") ? popup : null;
     },
-    querySelectorAll: sel => (sel.includes("ad-slot") ? [adNode] : []),
-    getElementById: id => (id === "dismiss-button" ? dismiss : null)
+    querySelectorAll: sel => {
+      counts.docScans++;
+      return sel.includes("ad-slot") ? [adNode] : [];
+    },
+    getElementById: id => {
+      // Only YouTube builds #movie_player; off YouTube the tick has to stay a no-op.
+      if (id === "movie_player") return /(^|\.)youtube\.com$/.test(hostname) ? player : null;
+      return id === "dismiss-button" ? dismiss : null;
+    }
   };
-  return { document, location: { hostname }, injected, counts, video };
+  return { document, location: { hostname }, injected, counts, flags, timers, video };
 }
 
 function load(dom, state) {
@@ -47,7 +63,8 @@ function load(dom, state) {
     chrome: { storage: { local: { get: async () => state } } },
     document: dom.document,
     location: dom.location,
-    setInterval: () => 0,
+    // cosmetic.js starts both cadences itself; the test drives the callbacks by hand.
+    setInterval: (fn, ms) => { dom.timers.push({ fn, ms }); return dom.timers.length; },
     requestAnimationFrame: () => 1,
     cancelAnimationFrame: () => {},
     isFinite
@@ -74,13 +91,21 @@ const flush = () => new Promise(r => setTimeout(r, 0));
   dom.counts.skip = 0; // the init tick already ran; count only the tick under test
   dom.counts.removed = 0;
   dom.counts.dismiss = 0;
+  dom.counts.docQueries = 0;
+  dom.counts.docScans = 0;
   sandbox.youtubeAdTick();
   assert.strictEqual(dom.video.currentTime, 29.5, "the tick seeks to just before the ad's end");
   assert.strictEqual(dom.video.playbackRate, 16, "the ad plays at 16x");
   assert.strictEqual(dom.video.muted, true, "the ad is muted");
   assert.strictEqual(dom.counts.skip, 1, "the tick should press Skip");
-  assert.strictEqual(dom.counts.removed, 2, "the tick should remove the ad's grid cell and the popup");
-  assert.strictEqual(dom.counts.dismiss, 1, "the tick should dismiss the enforcement popup");
+  // The 300ms tick runs for the life of the tab, so it has to stay inside the player subtree.
+  // Fourteen document scans at that rate is what made YouTube stutter while it rendered.
+  assert.strictEqual(dom.counts.docScans, 0, "the fast tick must not scan the document");
+  assert.strictEqual(dom.counts.docQueries, 0, "the fast tick must not query the document");
+  // The cleanup that does need the document runs on its own, slower cadence.
+  sandbox.youtubeAdSweep();
+  assert.strictEqual(dom.counts.removed, 2, "the sweep should remove the ad's grid cell and the popup");
+  assert.strictEqual(dom.counts.dismiss, 1, "the sweep should dismiss the enforcement popup");
 
   // The ad reached its end: it must be handed back untouched, or YouTube never resumes.
   dom.video.currentTime = 30;
@@ -130,12 +155,14 @@ const flush = () => new Promise(r => setTimeout(r, 0));
   load(wl, { enabled: true, whitelist: ["youtube.com"], cosmetic: [] });
   await flush();
   assert.strictEqual(wl.injected.length, 0, "a whitelisted site gets no stylesheet");
+  assert.strictEqual(wl.timers.length, 0, "a whitelisted site must not start the tick");
 
   // Master off: nothing either.
   const offState = makeDom("www.youtube.com");
   load(offState, { enabled: false, whitelist: [], cosmetic: [] });
   await flush();
   assert.strictEqual(offState.injected.length, 0, "disabled means no stylesheet");
+  assert.strictEqual(offState.timers.length, 0, "disabled means no tick");
 
   // Live video (infinite duration) must not be seeked.
   const live = makeDom("www.youtube.com");
@@ -149,6 +176,44 @@ const flush = () => new Promise(r => setTimeout(r, 0));
   live.video.duration = NaN;
   liveSandbox.youtubeAdTick();
   assert.strictEqual(live.video.currentTime, 0, "an unknown duration must not be seeked");
+
+  // A page with no ad: 1.5 seconds of fast ticks must cost nothing. Before the split this was 14
+  // document traversals plus a `:has()` query every 300ms, on every page, ad or not.
+  const idle = makeDom("www.youtube.com", { adPlayer: false });
+  const idleSandbox = load(idle, { enabled: true, whitelist: [], cosmetic: [] });
+  await flush();
+  idle.counts.docQueries = 0;
+  idle.counts.docScans = 0;
+  idle.counts.skip = 0;
+  for (let i = 0; i < 5; i++) idleSandbox.youtubeAdTick();
+  assert.strictEqual(idle.counts.docScans, 0, "five ticks with no ad must not scan the document");
+  assert.strictEqual(idle.counts.docQueries, 0, "five ticks with no ad must not query the document");
+  assert.strictEqual(idle.counts.skip, 0, "no ad means no Skip press");
+  assert.strictEqual(idle.video.currentTime, 0, "no ad means no seek");
+
+  // The cadences are 300ms for the ad and 1500ms for the cleanup: the sweep is the only callback
+  // allowed to touch the whole document, and it pays exactly one scan per ad selector.
+  assert.deepStrictEqual(idle.timers.map(t => t.ms), [300, 1500],
+    "one fast tick and one slow sweep, in that order");
+  idle.counts.docQueries = 0;
+  idle.counts.docScans = 0;
+  idle.timers[1].fn();
+  assert.strictEqual(idle.counts.docScans, 14, "the sweep scans once per ad selector, not once per tick");
+  assert.strictEqual(idle.counts.docQueries, 1, "the sweep also looks for the detection wall");
+
+  // An ad that starts long after the page settled still has to die on the next fast tick.
+  idle.flags.adPlaying = true;
+  idleSandbox.youtubeAdTick();
+  assert.strictEqual(idle.video.currentTime, 29.5, "an ad that appears later is still seeked");
+  assert.strictEqual(idle.video.playbackRate, 16, "an ad that appears later is still sped up");
+  assert.strictEqual(idle.counts.skip, 1, "an ad that appears later still gets Skip pressed");
+  // And the class leaving hands the video back at its own speed and mute state.
+  idle.flags.adPlaying = false;
+  idle.video.currentTime = 5;
+  idleSandbox.youtubeAdTick();
+  assert.strictEqual(idle.video.playbackRate, 1, "the ad class leaving restores the playback rate");
+  assert.strictEqual(idle.video.muted, false, "the ad class leaving restores the mute state");
+  assert.strictEqual(idle.video.currentTime, 5, "the real video is never seeked");
 
   console.log("cosmetic/YouTube: OK");
 })().catch(e => { console.error("FAIL:", e.message); process.exit(1); });

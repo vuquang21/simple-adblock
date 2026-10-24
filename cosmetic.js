@@ -69,7 +69,10 @@ const YOUTUBE_REMOVE = [
 ];
 // A feed ad sits inside this grid cell, which keeps its empty box if only the ad is removed.
 const YOUTUBE_AD_CELL = "ytd-rich-item-renderer";
-const YOUTUBE_AD_PLAYING = "#movie_player.ad-showing, #movie_player.ad-interrupting";
+// The two classes YouTube itself toggles while an ad is on screen. They are named as classes, not
+// as the `#movie_player.ad-showing` selector they used to be, because the check is a classList
+// read on one element: no selector engine, no document traversal, 3x/s for the life of the tab.
+const YOUTUBE_AD_CLASSES = ["ad-showing", "ad-interrupting"];
 // Ad controls can appear even when the player class does not (stitched/server-side ads).
 const YOUTUBE_AD_UI = ".ytp-ad-player-overlay, .ytp-ad-simple-ad-badge, .ytp-ad-text, .ytp-ad-preview-container";
 const YOUTUBE_SKIP = ".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-container button, button[aria-label*='Skip' i]";
@@ -104,14 +107,26 @@ function stopAdFastForward() {
   }
 }
 
+// Two cadences, because the two jobs cost wildly different amounts. Killing the ad only needs the
+// player subtree: read its classes, keep 16x pinned, press Skip. Sweeping the document for the 14
+// ad containers cost 14 full traversals every 300ms -- the single biggest source of jank this
+// extension added to YouTube -- and buys nothing at that speed, because the stylesheet already
+// hides those containers the moment they appear; remove() only reclaims the empty slot.
+const YOUTUBE_TICK = 300;
+// shortcut: YOUTUBE_REMOVE is the part that can wait -- the stylesheet already hides those
+// containers, so stopping at half a second only delays reclaiming the empty slot.
+const YOUTUBE_SWEEP_TICK = 1500;
+
 function youtubeAdTick() {
-  const skipButton = document.querySelector(YOUTUBE_SKIP);
-  const adPlaying = document.querySelector(YOUTUBE_AD_PLAYING);
-  const player =
-    adPlaying ||
-    document.querySelector("#movie_player:has(" + YOUTUBE_AD_UI + ")") ||
-    (skipButton && skipButton.closest("#movie_player"));
-  const video = player && player.querySelector("video");
+  const player = document.getElementById("movie_player");
+  // No player: non-YouTube, or YouTube has not built one yet. Nothing to speed up.
+  if (!player) return stopAdFastForward();
+  const adPlaying = YOUTUBE_AD_CLASSES.some(c => player.classList.contains(c));
+  const skipButton = player.querySelector(YOUTUBE_SKIP);
+  // The same three signals as before, now anchored on the player element instead of a
+  // `:has()` document query: an ad class, a Skip button, or ad controls inside the player.
+  const onAd = adPlaying || !!skipButton || !!player.querySelector(YOUTUBE_AD_UI);
+  const video = onAd ? player.querySelector("video") : null;
   // Read the duration once: it flips to NaN/Infinity while YouTube swaps media, and assigning a
   // non-finite currentTime throws. Only a real, positive duration is a seekable ad.
   const duration = video ? video.duration : NaN;
@@ -129,18 +144,19 @@ function youtubeAdTick() {
     // video in, leaving a frozen black player at the ad's full length.
     if (video.currentTime < duration - 1) video.currentTime = duration - 0.5;
   }
-  if (player) {
-    const skip = player.querySelector(YOUTUBE_SKIP);
-    if (skip) skip.click();
-  }
+  if (skipButton) skipButton.click();
+}
+
+// Ad nodes the stylesheet only hides; removing them reclaims the empty slot they leave behind.
+// YouTube rebuilds the detection wall no matter what, so this also has to keep dismissing it.
+function youtubeAdSweep() {
   for (const sel of YOUTUBE_REMOVE)
     for (const el of document.querySelectorAll(sel)) (el.closest(YOUTUBE_AD_CELL) || el).remove();
   const popup = document.querySelector(YOUTUBE_ENFORCEMENT);
-  if (popup) {
-    const dismiss = document.getElementById("dismiss-button");
-    if (dismiss) dismiss.click();
-    popup.remove();
-  }
+  if (!popup) return;
+  const dismiss = document.getElementById("dismiss-button");
+  if (dismiss) dismiss.click();
+  popup.remove();
 }
 
 chrome.storage.local.get(["enabled", "whitelist", "cosmetic", "siteRules"]).then(({ enabled = true, whitelist = [], cosmetic = [], siteRules = {} }) => {
@@ -157,7 +173,14 @@ chrome.storage.local.get(["enabled", "whitelist", "cosmetic", "siteRules"]).then
     .concat(youtube ? YOUTUBE_SELECTORS : []);
   injectHiding(selectors);
   if (youtube) {
+    // The player is rebuilt on every SPA navigation, so both run from an interval rather than
+    // from events on an element that gets thrown away.
     youtubeAdTick();
-    setInterval(youtubeAdTick, 300);// the player is rebuilt on every SPA navigation
+    setInterval(youtubeAdTick, YOUTUBE_TICK);
+    // shortcut: the detection wall can now sit for up to YOUTUBE_SWEEP_TICK before it is clicked
+    // away, where the old single tick cleared it within 300ms. A faster sweep means putting the 14
+    // document queries back on the fast tick, which is what made the page stutter.
+    youtubeAdSweep();
+    setInterval(youtubeAdSweep, YOUTUBE_SWEEP_TICK);
   }
 });
