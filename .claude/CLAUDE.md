@@ -20,7 +20,10 @@ Network blocking and element hiding are both per-site overridable via a whitelis
   `picker.js` in that order, because `picker.js` calls `addHiddenRule()` from `cosmetic.js`.
 - **`background.js`** — service worker. Rebuilds dynamic DNR rules from the blocklist and the
   whitelist, auto-blocks ad-like third-party requests it observes, and keeps the per-tab block
-  count in the action badge. Request writes are batched (2s flush).
+  count in the action badge. Request writes are batched (2s flush). Badge writes are
+  fire-and-forget *with* a `.catch`: a tab closed mid-navigation makes
+  `action.setBadgeText({ tabId })` reject with "No tab with id", which otherwise shows up in
+  `chrome://extensions` → Errors as a blocking failure.
 - **`shared.js`** — helpers shared by dashboard/popup/content script, loaded via
   `importScripts` in the worker and `<script>`/content script in pages: `parseDomains`,
   `parseCosmetic`, `parseScopedCosmetic`, `siteRulesFor`, `mergeSiteRules`, `MAX_SITE_RULES`,

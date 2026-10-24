@@ -11,6 +11,7 @@ function makeChrome() {
   const addedCalls = [];
   const removedCalls = [];
   const badges = {};
+  const deadTabs = new Set(); // tabs the badge API must reject for, like a closed tab
 
   const chrome = {
     storage: {
@@ -54,12 +55,20 @@ function makeChrome() {
     },
     action: {
       setBadgeBackgroundColor() {},
-      setBadgeText({ tabId, text }) { badges[tabId] = text; }
+      // Chrome rejects these with "No tab with id: …" once the tab is gone.
+      setBadgeText({ tabId, text }) {
+        if (deadTabs.has(tabId)) return Promise.reject(new Error("No tab with id: " + tabId));
+        badges[tabId] = text;
+        return Promise.resolve();
+      }
     },
-    tabs: { onUpdated: { addListener() {} }, onRemoved: { addListener() {} } },
+    tabs: {
+      onUpdated: { addListener: fn => { chrome.__onUpdated = fn; } },
+      onRemoved: { addListener: fn => { chrome.__onRemoved = fn; } }
+    },
     webRequest: { onBeforeRequest: { addListener(fn) { chrome.__onRequest = fn; } } }
   };
-  return { chrome, store, addedCalls, removedCalls, badges, getRules: () => rules };
+  return { chrome, store, addedCalls, removedCalls, badges, deadTabs, getRules: () => rules };
 }
 
 // Loads background.js into a vm over the given fake chrome and returns the sandbox.
@@ -73,7 +82,7 @@ function boot(chrome) {
 }
 
 async function scenario() {
-  const { chrome, addedCalls, removedCalls, badges, getRules } = makeChrome();
+  const { chrome, addedCalls, removedCalls, badges, deadTabs, getRules } = makeChrome();
   const sandbox = { chrome, console, URL, setTimeout, clearTimeout };
   vm.createContext(sandbox);
   sandbox.importScripts = (...files) =>
@@ -150,6 +159,18 @@ async function scenario() {
   chrome.__onRequest({ url: "https://example.com/app.js", initiator: "https://example.com", tabId: 7 });
   await new Promise(r => setTimeout(r, 0));
   assert.strictEqual(badges[7], "1", "badge should count block rules only");
+
+  // A tab closed mid-navigation: the badge clear rejects with "No tab with id", and the
+  // listener must swallow it — an unhandled rejection lands in the extension error list
+  // where the user reads it as "blocking ads is broken".
+  const unhandled = [];
+  const onUnhandled = e => unhandled.push(e);
+  process.on("unhandledRejection", onUnhandled);
+  deadTabs.add(9);
+  chrome.__onUpdated(9, { status: "loading" });
+  await new Promise(r => setTimeout(r, 20));
+  process.off("unhandledRejection", onUnhandled);
+  assert.deepStrictEqual(unhandled, [], "a closed tab must not surface an unhandled rejection");
 
   // Toggling off should clear all rules.
   await chrome.storage.local.set({ enabled: false });

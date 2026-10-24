@@ -177,7 +177,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.status !== "loading") return;
   delete badgeAt[tabId];
-  chrome.action.setBadgeText({ tabId, text: "" });
+  // A tab closed mid-load is already gone, and the badge API rejects with
+  // "No tab with id: …" — swallow it instead of leaving an unhandled rejection
+  // in the extension's error list.
+  chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
 });
 chrome.tabs.onRemoved.addListener(tabId => delete badgeAt[tabId]);
 chrome.webRequest.onBeforeRequest.addListener(track, { urls: ["<all_urls>"] });
