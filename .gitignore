@@ -1,2 +1,4 @@
 .DS_Store
 dist/
+# pi agent state (goal ledger, hooks audit log) - not project content
+.pi/
